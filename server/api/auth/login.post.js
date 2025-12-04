@@ -1,4 +1,21 @@
+import {
+  applyMiddlewares,
+  completeMiddlewares,
+} from "../../middleware/index.js";
+
 export default defineEventHandler(async (event) => {
+  // 应用中间件
+  const middlewareContext = applyMiddlewares(event, {
+    enableRateLimit: true, // 登录接口需要速率限制
+    validation: {
+      allowedMethods: ["POST"],
+      allowedContentTypes: ["application/json"],
+    },
+  });
+
+  let statusCode = 200;
+  let error = null;
+
   try {
     const config = useRuntimeConfig();
     const body = await readBody(event);
@@ -44,30 +61,38 @@ export default defineEventHandler(async (event) => {
       }
     }
 
+    statusCode = 200;
     return response;
-  } catch (error) {
+  } catch (err) {
+    error = err;
+    statusCode = err.statusCode || err.status || 500;
+
     // 处理连接错误
     if (
-      error.code === "ECONNREFUSED" ||
-      error.message?.includes("unreachable") ||
-      error.message?.includes("fetch failed")
+      err.code === "ECONNREFUSED" ||
+      err.message?.includes("unreachable") ||
+      err.message?.includes("fetch failed")
     ) {
       console.error("无法连接到后端服务:", apiBase);
-      throw createError({
+      statusCode = 503;
+      error = createError({
         statusCode: 503,
         statusMessage:
           "后端服务不可用，请确保 Express 后端服务已启动（端口 3001）",
       });
+    } else if (err.statusCode) {
+      error = err;
+      statusCode = err.statusCode;
+    } else {
+      error = createError({
+        statusCode: statusCode,
+        statusMessage: err.message || "登录失败",
+      });
     }
 
-    // 处理其他错误
-    if (error.statusCode) {
-      throw error;
-    }
-
-    throw createError({
-      statusCode: error.statusCode || error.status || 500,
-      statusMessage: error.message || "登录失败",
-    });
+    throw error;
+  } finally {
+    // 完成中间件处理（记录日志和性能指标）
+    completeMiddlewares(event, middlewareContext, statusCode, error);
   }
 });
