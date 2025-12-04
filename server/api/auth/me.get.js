@@ -1,0 +1,58 @@
+export default defineEventHandler(async (event) => {
+  try {
+    const config = useRuntimeConfig();
+    const token = getCookie(event, "token");
+
+    if (!token) {
+      throw createError({
+        statusCode: 401,
+        statusMessage: "未授权，请先登录",
+      });
+    }
+
+    // 直接调用 Express API，传递 cookie
+    // 使用 config.apiBase（服务端配置）或回退到默认值
+    const apiBase = config.apiBase || "http://localhost:3001";
+    const expressResponse = await fetch(`${apiBase}/api/v1/auth/me`, {
+      method: "GET",
+      headers: {
+        Cookie: `token=${token}`,
+      },
+    });
+
+    if (!expressResponse.ok) {
+      const errorData = await expressResponse.json().catch(() => ({}));
+      throw createError({
+        statusCode: expressResponse.status,
+        statusMessage: errorData.message || "获取用户信息失败",
+      });
+    }
+
+    const response = await expressResponse.json();
+    return response;
+  } catch (error) {
+    // 处理连接错误
+    if (
+      error.code === "ECONNREFUSED" ||
+      error.message?.includes("unreachable") ||
+      error.message?.includes("fetch failed")
+    ) {
+      console.error("无法连接到后端服务:", apiBase);
+      throw createError({
+        statusCode: 503,
+        statusMessage:
+          "后端服务不可用，请确保 Express 后端服务已启动（端口 3001）",
+      });
+    }
+
+    // 处理其他错误
+    if (error.statusCode) {
+      throw error;
+    }
+
+    throw createError({
+      statusCode: error.statusCode || error.status || 500,
+      statusMessage: error.message || "获取用户信息失败",
+    });
+  }
+});
